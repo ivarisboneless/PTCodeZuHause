@@ -1,0 +1,285 @@
+What you’re trying to achieve (goal of 3.3)
+
+You will build a small GUI that can:
+
+Start reading sensor data (button)
+
+Stop reading sensor data (button)
+
+Toggle sensor mode (ambient ↔ reflect) (button)
+
+Display the values live in the GUI while it runs
+
+To make “live updates”, you normally use a timer that repeatedly reads the sensor and updates the plot.
+
+Step (a) on the page — what it literally means
+Step 1 — Open the prepared GUI template
+
+In the MATLAB Command Window type:
+
+appdesigner lightGui
+
+
+What happens:
+
+MATLAB opens App Designer
+
+It loads a file called lightGui.mlapp (a prepared GUI)
+
+You don’t start from scratch — they already built the window layout and some code skeleton
+
+If MATLAB says it can’t find it:
+
+the file lightGui.mlapp is not in your Current Folder or MATLAB path.
+
+Step 2 — open the Code View
+
+Inside App Designer you have two main “worlds”:
+
+Design View: drag & drop UI elements (buttons, axes, labels)
+
+Code View: where you write the logic
+
+So you click Code View.
+
+Step 3 — find startupFcn
+
+In App Designer every app has a special function:
+
+startupFcn(app)
+
+This runs automatically when the GUI starts.
+
+Key detail (super important):
+
+It runs before the user starts clicking buttons
+
+So it’s the best place to do “setup” things:
+
+connect EV3
+
+create sensor object
+
+create and configure timer
+
+set default mode text etc.
+
+That’s why the PDF says: “Schauen Sie sich startupFcn an… Diese Funktion wird kurz vor Anzeige der GUI ausgeführt.”
+
+Meaning: MATLAB calls it when the app is being created, basically during startup.
+
+Step 4 — what the template probably already does in startupFcn
+
+The text says:
+
+In unserem Fall wird hier die Funktion lightConnectEV3 … aufgerufen, um die Verbindung zum EV3 aufzubauen und den Lichtsensor zu aktivieren. Außerdem werden einige Konfigurationsparameter gesetzt, sowie das Timer-Objekt erzeugt und konfiguriert.
+
+So inside startupFcn, the template likely does something like this (conceptually):
+
+Connect EV3
+
+choose connection: USB or Bluetooth
+
+create ev3 object
+
+Activate / prepare the light sensor
+
+create a colorSensor object
+
+decide the mode ambient or reflect
+
+Set config values
+
+e.g. sample period (how often read)
+
+buffer size (how many points you show)
+
+default mode string, etc.
+
+Create timer
+
+timer(...)
+
+set Period, ExecutionMode, etc.
+
+set TimerFcn → the function that reads sensor + updates plot
+
+So: startupFcn is “prepare everything so Start button can just press ‘go’”.
+
+Why do they tell you to read startupFcn first?
+
+Because if you understand the startup, you understand the entire app logic:
+
+The GUI elements already exist (buttons/axes)
+
+The only missing part is what happens when you press buttons
+
+Those button callbacks will use variables created in startupFcn
+
+like app.ev3, app.sensor, app.myTimer, app.config, etc.
+
+The simple mental model (no fancy words)
+
+Think of the app like a robot lab bench:
+
+startupFcn = you arrive, plug in cables, put the sensor on the bench, set the stopwatch
+
+Start button = start the stopwatch
+
+Timer tick = every 0.1s read sensor and draw
+
+Stop button = stop the stopwatch
+
+Toggle mode button = switch sensor mode + update label
+
+
+1) Properties (put inside properties (Access = private))
+properties (Access = private)
+    ev3                 % legoev3 object
+    sensor              % colorSensor object
+    mode char           % 'ambient' or 'reflect'
+    tim                 % timer object
+
+    t0                  % tic reference
+    t double = []       % time data
+    y double = []       % sensor data
+
+    maxPoints double = 200
+    period double = 0.10
+end
+
+2) startupFcn (App starts here)
+methods (Access = private)
+
+    function startupFcn(app)
+        % --- choose connection + sensor settings ---
+        connectionType = 'usb';   % change to 'bluetooth' if needed
+        sensorPort = 1;           % change if your sensor is not port 1
+
+        app.mode = 'ambient';     % start mode
+        app.ModeLabel.Text = ['Mode: ' app.mode];
+
+        % --- connect EV3 ---
+        if strcmpi(connectionType,'usb')
+            app.ev3 = legoev3('usb');
+        else
+            app.ev3 = legoev3('bluetooth');
+        end
+
+        % --- create sensor ---
+        app.sensor = colorSensor(app.ev3, sensorPort);
+
+        % --- setup plot ---
+        grid(app.UIAxes,'on');
+        xlabel(app.UIAxes,'time [s]');
+        ylabel(app.UIAxes,['light ' app.mode]);
+        cla(app.UIAxes);
+
+        % --- create timer (does NOT start yet) ---
+        app.tim = timer( ...
+            'ExecutionMode','fixedRate', ...
+            'Period', app.period, ...
+            'BusyMode','drop', ...
+            'TimerFcn', @(~,~)app.onTick() );
+
+        % optional: start/stop message in command window
+        app.tim.StartFcn = @(~,~)disp('Timer started');
+        app.tim.StopFcn  = @(~,~)disp('Timer stopped');
+    end
+
+3) Timer tick function (reads + updates plot)
+    function onTick(app)
+        % read one sensor sample
+        if isempty(app.t0)
+            app.t0 = tic;
+        end
+
+        tNow = toc(app.t0);
+        yNow = readLightIntensity(app.sensor, app.mode);
+
+        % append
+        app.t(end+1) = tNow;
+        app.y(end+1) = yNow;
+
+        % keep only last maxPoints points
+        if numel(app.t) > app.maxPoints
+            app.t = app.t(end-app.maxPoints+1:end);
+            app.y = app.y(end-app.maxPoints+1:end);
+        end
+
+        % update plot
+        plot(app.UIAxes, app.t - app.t(1), app.y, 'LineWidth', 1.5);
+        xlabel(app.UIAxes,'time since first shown [s]');
+        ylabel(app.UIAxes,['light ' app.mode]);
+        drawnow limitrate;
+    end
+
+4) Start button callback
+
+Right click StartButton → Callbacks → Add ButtonPushedFcn, then paste:
+
+    function StartButtonPushed(app, ~)
+        if strcmp(app.tim.Running,'off')
+            % reset data each time you start
+            app.t0 = tic;
+            app.t = [];
+            app.y = [];
+            start(app.tim);
+        end
+    end
+
+5) Stop button callback
+    function StopButtonPushed(app, ~)
+        if strcmp(app.tim.Running,'on')
+            stop(app.tim);
+        end
+    end
+
+6) Toggle mode callback
+    function ToggleButtonPushed(app, ~)
+        wasRunning = strcmp(app.tim.Running,'on');
+        if wasRunning
+            stop(app.tim);
+        end
+
+        if strcmp(app.mode,'ambient')
+            app.mode = 'reflect';   % if error: try 'reflected'
+        else
+            app.mode = 'ambient';
+        end
+
+        app.ModeLabel.Text = ['Mode: ' app.mode];
+        ylabel(app.UIAxes, ['light ' app.mode]);
+
+        if wasRunning
+            start(app.tim);
+        end
+    end
+
+7) Close / cleanup (IMPORTANT)
+
+In App Designer, use Callbacks → UIFigureCloseRequestFcn (or the app’s close request) and paste:
+
+    function UIFigureCloseRequest(app, ~)
+        if ~isempty(app.tim) && isvalid(app.tim)
+            if strcmp(app.tim.Running,'on')
+                stop(app.tim);
+            end
+            delete(app.tim);
+        end
+        clear app.sensor app.ev3
+        delete(app.UIFigure);
+    end
+
+end
+
+If “reflect” mode errors
+
+Some versions want 'reflected' instead of 'reflect'. Replace:
+
+app.mode = 'reflect';
+
+
+with:
+
+app.mode = 'reflected';
