@@ -1,5 +1,9 @@
 function out = lightReadWithLoop(brickObj, numberOfSeconds)
 % out = lightReadWithLoop(brickObj, 5)
+% this is how it is runend brick = lightConnectEV3('usb','ambient');
+out   = lightReadWithLoop(brick, 5);
+lightDisconnectEV3(brick);
+
 
     values = [];
     times  = [];
