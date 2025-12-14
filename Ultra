@@ -1,0 +1,1415 @@
+Alright, let’s demystify this calmly and cleanly, like engineers with coffee and a whiteboard.
+
+What you’re looking at are three tightly connected ideas:
+
+how ultrasonic distance measurement works in physics,
+
+how the LEGO Mindstorms EV3 ultrasonic sensor implements that idea,
+
+how MATLAB talks to the sensor and reads distances.
+
+I’ll walk through them in that order, simple first, then deeper, then code.
+
+1) Ultrasonic distance measurement — the core idea (Section 2.1)
+
+This is pure physics, no LEGO yet.
+
+The sensor does one thing:
+It sends out a short ultrasonic sound pulse and listens for the echo.
+
+Think of shouting in a canyon and timing how long it takes to hear yourself back.
+
+Key facts:
+
+Sound speed in air ≈ 340 m/s
+
+The pulse travels to the object and back
+
+The sensor measures the total time, not one-way time
+
+That’s why the formula is:
+
+distance = (sound speed × measured time) / 2
+
+Why divide by 2?
+Because the sound goes:
+sensor → object → sensor
+and the measured time includes both paths.
+
+In the figure:
+
+t is the echo time (round trip)
+
+s = v · t is written, but in practice we use s = v · t / 2
+
+That’s the entire physical principle. No magic.
+
+2) What the EV3 ultrasonic sensor actually does (Section 2.2)
+
+Now LEGO enters the scene.
+
+The EV3 ultrasonic sensor has:
+
+two transducers side by side
+
+one sends sound
+
+one receives sound
+
+Important details from the text:
+
+Frequency ≈ 40 kHz (ultrasound → humans can’t hear it)
+
+The sensor sends 11 pulses in a row
+
+Total pulse duration ≈ 275 µs
+
+Critical consequence:
+The sensor can only detect echoes that arrive after those pulses are fully sent.
+
+Let’s translate that into distance:
+
+Sound travels:
+340 m/s × 275 µs ≈ 9.35 cm (round trip)
+
+Since that is to object and back, the minimum measurable distance is:
+
+9.35 cm / 2 ≈ 4.7 cm
+
+So:
+
+Anything closer than ~4.7 cm → unreliable or invisible
+
+That’s a hardware limit, not a software bug
+
+Also important:
+
+Resolution ≈ 0.1 cm
+
+Accuracy ≈ ±1 cm
+
+Echo strength (amplitude) is not measured
+
+If no echo is detected → sensor returns 255
+
+That 255 is a special “I see nothing” value.
+
+3) How MATLAB talks to the sensor (Section 2.3)
+
+Now we get practical.
+
+You connect the ultrasonic sensor to an EV3 port (say Port 4).
+MATLAB needs two steps:
+
+set the sensor mode
+
+read the value
+
+Step 1: Set the sensor mode
+
+This tells the EV3 what kind of data you want.
+
+ev3.sensor4.mode = DeviceMode.UltraSonic.DistIN;
+
+
+This means:
+
+ultrasonic sensor
+
+distance mode
+
+units = inches
+(you can also choose cm)
+
+Why is this needed?
+Because EV3 sensors can have multiple modes (distance, listen, etc.).
+
+Step 2: Read the distance value
+s = ev3.sensor4.value;
+
+
+That’s it.
+
+What happens internally:
+
+EV3 sends ultrasonic pulses
+
+waits for echo
+
+converts time → distance
+
+MATLAB reads the processed result
+
+What s can be:
+
+a number like 23.4 → distance in cm or inches
+
+255 → no echo detected (too far, angled surface, soft material)
+
+You must always check for 255 in your code.
+
+4) A minimal, correct MATLAB example
+
+Here’s a clean example you can actually trust:
+
+% Set sensor mode (distance in cm)
+ev3.sensor4.mode = DeviceMode.UltraSonic.DistCM;
+
+% Read distance
+d = ev3.sensor4.value;
+
+% Check validity
+if d == 255
+    disp('No object detected');
+else
+    fprintf('Distance: %.1f cm\n', d);
+end
+
+
+Why this is good code:
+
+sets mode explicitly
+
+reads once
+
+handles the “no echo” case
+
+prints meaningful output
+
+Mental model to keep forever
+
+If you remember nothing else, remember this:
+
+Ultrasonic sensor =
+send sound → wait → hear echo → measure time → divide by 2 → distance
+
+EV3 just automates the physics and hands you the final number.
+
+Once this clicks, everything in later sections (like braking distance experiments) becomes straightforward cause-and-effect, not memorization.
+
+Next, when you’re ready, we can connect this directly to robot motion, braking distance, and real measurement errors, which is where this experiment starts to feel like real engineering instead of a lab sheet.
+
+Perfect, this is where the experiment stops being “sensor demo” and becomes real system modeling. Let’s unpack pages 6–7 slowly, cleanly, and with intuition first, equations second, MATLAB last.
+
+I’ll follow the document’s logic exactly, but remove the fog.
+
+Big picture (what this part is about)
+
+You are preparing a robot that drives forward, measures its speed, then brakes, and you want to understand:
+
+how motor speed relates to the power setting
+
+why motor regulation on/off matters
+
+how to measure speed correctly
+
+how to start & stop two motors synchronously
+
+how braking distance relates to speed (the physics model)
+
+Everything here exists so that later, when you plot Braking distance vs speed, the result actually means something.
+
+1) Motor speed vs Power (page 6, top)
+What is being measured?
+
+They measure angular velocity of one motor:
+
+unit: deg/s
+
+via the tachometer (encoder)
+
+360° = one full wheel rotation
+
+They vary:
+
+power from 0 to 100
+
+motor regulated vs unregulated
+
+Ungeregelt (regulation OFF)
+
+Left plot:
+
+low power → motor barely moves
+
+mid power → nonlinear jump
+
+high power → saturation
+
+Why?
+Because:
+
+friction
+
+motor dead zone
+
+battery voltage limits
+
+Power ≠ speed in a simple way.
+
+Geregelt (regulation ON)
+
+Right plot:
+
+almost perfectly linear
+
+This is the key line in the text:
+
+Winkelgeschwindigkeit [Grad/s] = 10 · POWER
+
+That means:
+
+Power = 10 → ~100 deg/s
+
+Power = 50 → ~500 deg/s
+
+Power = 90 → ~900 deg/s
+
+This linearity is gold.
+It makes your robot predictable.
+
+That’s why later experiments depend on regulated mode.
+
+2) Why regulation matters physically
+
+Motor regulation is basically a feedback controller:
+
+EV3 measures speed
+
+compares with target
+
+adjusts voltage automatically
+
+Without regulation:
+
+load changes speed
+
+floor friction ruins repeatability
+
+With regulation:
+
+speed ≈ constant
+
+equations start to behave
+
+This is not LEGO magic, this is control theory in disguise.
+
+3) Measuring real speed (tic / toc)
+
+Speed is not read directly.
+You compute it.
+
+They do:
+
+read tachoCount (degrees)
+
+measure time between readings
+
+compute angular velocity
+
+MATLAB gives you the stopwatch:
+
+tic
+% do something
+delta_t = toc;   % seconds since last tic
+
+
+Used like this conceptually:
+
+angle1 = motorA.tachoCount;
+tic
+pause(0.1)
+angle2 = motorA.tachoCount;
+dt = toc;
+
+omega = (angle2 - angle1) / dt;   % deg/s
+
+
+This gives actual speed, not just “intended” speed.
+
+4) Synchronous motor control (page 7)
+
+Now you move from one motor to two motors.
+
+Why?
+Because:
+
+two motors = differential drive
+
+unsynced motors → curved path
+
+braking experiment needs straight motion
+
+Core idea
+
+Motor A and Motor B must:
+
+start at the same time
+
+stop at the same time
+
+rotate at the same speed
+
+The code (explained line by line)
+motorR = ev3.motorA;
+motorL = ev3.motorB;
+
+
+Right and left motors assigned.
+
+motorR.brakeMode = 'Brake';
+
+
+Brake mode ON:
+
+motor actively resists motion when stopped
+
+later, for braking distance measurement, this will be changed to 'Coast'
+
+motorR.speedRegulation = 'Off';
+
+
+This is crucial:
+
+syncStart requires regulation OFF
+
+synchronization is handled by the sync controller itself
+
+motorR.power = 20;
+
+
+Base power for the synchronized movement.
+
+motorR.syncedStart(motorL, 'turnRatio', 0);
+
+
+This is the heart of it.
+
+syncedStart → both motors start together
+
+turnRatio = 0 → same speed, same direction
+
+robot drives straight
+
+Other turnRatio values:
+
+positive → turning
+
+negative → opposite directions
+
+zero → straight line
+
+Stopping synchronously
+motorR.syncedStop();
+
+
+Both motors stop at the same instant.
+
+5) Measuring braking distance (page 7 bottom)
+
+Now the experiment goal becomes clear.
+
+What is “braking distance” here?
+
+It is:
+
+distance traveled after motors are switched off
+
+not while braking actively
+
+measured with motor coasting
+
+That’s why they say:
+
+motor.brakeMode = 'Coast';
+
+
+Coast means:
+
+no motor torque
+
+robot slows only due to friction
+
+clean physics
+
+Two ways to measure braking distance
+
+Using the tachoCount
+
+distance = wheel rotations × circumference
+
+Using the ultrasonic sensor
+
+distance change before vs after stopping
+
+Both are valid.
+
+6) The physics model (very important)
+
+Final paragraph:
+
+braking distance ∝ speed²
+
+Why?
+
+Because:
+
+kinetic energy = ½ m v²
+
+braking force ≈ constant (friction)
+
+work done by friction = force × distance
+
+So:
+v² ∝ braking distance
+
+This is why later you’ll fit:
+
+a quadratic curve
+
+not a line
+
+If your data looks linear → something is wrong.
+
+Mental summary (this is the exam-ready version)
+
+Regulated motors → linear speed vs power
+
+Real speed must be measured via tacho + time
+
+Two motors must be synchronized for straight motion
+
+Braking distance is measured in coast mode
+
+Physics predicts:
+Braking distance ∝ speed²
+
+Everything in these pages exists to make that final graph meaningful, not noisy LEGO chaos.
+
+Next step, if you want:
+I can help you write the full MATLAB experiment loop (drive → detect → stop → measure → log → plot), clean and minimal, exactly matching this theory.
+
+Excellent, this is the conceptual peak of the whole experiment. Pages 8–10 tie together physics, control, sensing, and data analysis. I’ll walk through it in the same calm, layered way: intuition → equations → MATLAB → what you’re actually expected to do.
+
+Page 8 — Braking distance model + curve fitting
+What is the goal here?
+
+You want the robot to stop at a safe distance before a wall, regardless of speed.
+To do that, the robot must predict how far it will roll after the motors are switched off.
+
+This page answers:
+
+how braking distance depends on speed
+
+how to model it mathematically
+
+how to fit real measurements to theory
+
+The physical model (why quadratic?)
+
+They assume:
+
+braking force ≈ constant
+
+motors are switched off (coast)
+
+friction does the braking
+
+From basic physics:
+
+initial speed: 
+𝑣
+0
+v
+0
+	​
+
+
+constant deceleration: 
+𝑎
+a
+
+stopping time:
+
+𝑡
+=
+𝑣
+0
+𝑎
+t=
+a
+v
+0
+	​
+
+	​
+
+
+Distance during braking:
+
+𝑠
+=
+1
+2
+𝑎
+𝑡
+2
+s=
+2
+1
+	​
+
+at
+2
+
+Substitute 
+𝑡
+t:
+
+𝑠
+=
+1
+2
+𝑎
+(
+𝑣
+0
+𝑎
+)
+2
+=
+𝑣
+0
+2
+2
+𝑎
+s=
+2
+1
+	​
+
+a(
+a
+v
+0
+	​
+
+	​
+
+)
+2
+=
+2a
+v
+0
+2
+	​
+
+	​
+
+
+Key conclusion (this is the exam sentence):
+
+The braking distance depends quadratically on the initial speed.
+
+That’s why:
+
+straight line → wrong
+
+parabola → correct
+
+What you do with real data (polyfit)
+
+You measure:
+
+speed values 
+𝑣
+v
+
+corresponding braking distances 
+𝑠
+s
+
+Then MATLAB fits:
+
+𝑠
+(
+𝑣
+)
+≈
+𝑐
+2
+𝑣
+2
++
+𝑐
+1
+𝑣
++
+𝑐
+0
+s(v)≈c
+2
+	​
+
+v
+2
++c
+1
+	​
+
+v+c
+0
+	​
+
+
+Using:
+
+p = polyfit(v, s, 2);
+
+
+What p contains:
+
+p(1) → coefficient of 
+𝑣
+2
+v
+2
+
+p(2) → linear term
+
+p(3) → constant offset
+
+Why 2nd order?
+Because physics told you before measuring that it must be quadratic.
+This is model-driven engineering, not curve guessing.
+
+Page 9 — Environment scanning (Umgebungssensor)
+
+Now the experiment shifts from 1D stopping to 2D perception.
+
+What is the idea?
+
+Use the ultrasonic sensor to scan the surroundings and build a distance profile over angles.
+
+Two possible methods:
+
+rotate the sensor itself
+
+rotate the whole robot
+
+Either way:
+
+for each angle → measure distance
+
+store (angle, distance)
+
+That’s essentially a primitive radar / lidar.
+
+Important practical constraints
+
+The text quietly warns you about real-world issues:
+
+sensor cable must not twist
+
+rotation must be controlled
+
+angles must be known accurately
+
+That’s why:
+
+motor encoder angle = sensor angle
+
+synchronization matters again
+
+What data you collect
+
+You end up with two vectors:
+
+theta → angles (radians)
+
+rho → distances (cm)
+
+Each pair means:
+
+“At angle θ, the nearest object is ρ cm away”
+
+That’s polar coordinates.
+
+Page 10 — Polar plot + data cleanup
+Visualizing the environment
+
+MATLAB makes this trivial:
+
+polarplot(theta, rho);
+
+
+What you see:
+
+robot at the center
+
+walls as curves
+
+open space as empty regions
+
+This is exactly how real mobile robots map rooms, just with fancier sensors.
+
+Handling bad ultrasonic data (very important)
+
+The ultrasonic sensor returns:
+
+real distance → 0–~100 cm
+
+255 → no echo
+
+If you plot raw data:
+
+you get huge spikes
+
+the map becomes unreadable
+
+So they clip the data:
+
+d(d > 100) = 100;
+
+
+This means:
+
+“Anything farther than 100 cm is just ‘far’”
+
+improves visualization
+
+does NOT change physics, only presentation
+
+This is a classic engineering move:
+sanitize sensor data before plotting.
+
+How everything fits together (zoomed-out view)
+
+Here’s the deep structure of the whole experiment:
+
+Motor characterization
+
+power → speed (linear if regulated)
+
+Speed measurement
+
+tacho + time → real velocity
+
+Braking experiment
+
+coast mode
+
+braking distance vs speed²
+
+Model fitting
+
+polyfit → predictive equation
+
+Environment sensing
+
+ultrasonic distance vs angle
+
+Mapping
+
+polar plot → spatial understanding
+
+This is not a LEGO toy exercise.
+It’s a miniature autonomous driving pipeline.
+
+What examiners usually care about
+
+If you’re asked to explain, they want to hear things like:
+
+“Braking distance scales quadratically with velocity due to kinetic energy”
+
+“Motor regulation ensures linear speed–power behavior”
+
+“Ultrasonic measurements require filtering because 255 indicates no echo”
+
+“Polar plots are suitable for representing distance-angle measurements”
+
+If you can say those calmly, you’re in excellent shape.
+
+If you want next:
+
+I can help you write a clean MATLAB script that does the full scan + plot
+
+or help you prepare a 2–3 paragraph lab report explanation that sounds confident and precise without being verbose
+
+Great, this last section is the instruction manual for the whole lab. Pages 11–12 (Section 3: Durchführung) are not new theory; they tell you exactly what you must do, measure, plot, and hand in. I’ll translate each subtask (a–g) into:
+what it means → what you physically do → what MATLAB is for → what result is expected.
+
+Think of this as your checklist + mental map.
+
+Section 3 — Durchführung (Execution)
+a) Distance measurement & calibration
+
+What they want conceptually
+Check how accurate the EV3 ultrasonic sensor is compared to reality.
+
+What you do physically
+
+Plug ultrasonic sensor into Port 4
+
+Place a fixed object (wall, box)
+
+Measure real distance with a measuring tape
+
+Move robot/sensor to known distances:
+5, 10, 20, 30, 40, 50, 70, 100, 150, 200, 250, 300 cm
+
+What you record
+
+real distance (Meßabstand)
+
+sensor reading (Sensorabstand)
+
+What MATLAB is for
+
+plot: sensor distance vs real distance
+
+see offset, saturation, nonlinearity
+
+Expected insight
+
+near distances unreliable (< ~5 cm)
+
+far distances saturate (255)
+
+sensor ≠ perfect ruler
+
+This is sensor characterization, not robotics yet.
+
+b) Angular detection range
+
+What they want conceptually
+How wide is the ultrasonic “field of view”?
+
+What you do physically
+
+Keep distance to object constant
+
+Rotate sensor or object sideways
+
+Increase angle until sensor no longer detects it
+
+What you record
+
+angle vs detection yes/no (or distance drop)
+
+What MATLAB is for
+
+simple plot: distance vs angle
+
+Expected insight
+
+ultrasonic sensors have a cone, not a laser beam
+
+detection degrades with angle
+
+c) Robot drives & stops at a wall (first control task)
+
+What they want conceptually
+Robot should stop when it reaches a given distance from a wall.
+
+What you do physically
+
+Mount sensor facing forward
+
+Align sensor direction with driving direction
+
+Robot drives forward
+
+Continuously measure distance
+
+When distance ≤ 40 cm → stop motors
+
+Important detail
+Motors must be synchronized (syncedStart / syncedStop).
+
+What MATLAB is for
+
+read sensor continuously
+
+control motors
+
+implement if distance <= 40 → stop
+
+Expected insight
+This is reactive control, no prediction yet.
+
+d) Braking distance vs speed (core experiment)
+
+This is the most important scientific part.
+
+What they want conceptually
+Verify that braking distance depends on speed, and test if it’s quadratic.
+
+What you do physically
+
+Drive robot at different power values:
+20, 30, 40, 50, 60, 70, 80
+
+Stop motors suddenly
+
+Measure how far robot rolls after stopping
+
+Repeat each measurement 3 times
+
+Compute the mean value
+
+What you record
+
+power
+
+braking distance (mean)
+
+What MATLAB is for
+
+store data
+
+compute mean
+
+fit braking distance vs speed using:
+
+p = polyfit(speed, braking_distance, 2);
+
+
+Expected insight
+
+braking distance increases strongly with speed
+
+quadratic model fits better than linear
+
+This is where physics meets data.
+
+e) Predictive braking (using the model)
+
+Now it gets clever.
+
+What they want conceptually
+Robot should start braking early, depending on speed, so it always stops at the same distance from the wall.
+
+What changes from (c)?
+
+You no longer stop at 40 cm blindly
+
+You compute braking distance in advance
+
+Logic
+
+If I’m fast → I must stop earlier
+If I’m slow → I can stop later
+
+What MATLAB is for
+
+use fitted polynomial (from d)
+
+compute expected braking distance
+
+stop motors when:
+
+distance_to_wall <= braking_distance(speed)
+
+
+Expected insight
+This is model-based control, not trial-and-error.
+
+f) 360° environment scan
+
+What they want conceptually
+Build a map of the surroundings.
+
+What you do physically
+
+Rotate sensor or robot by 360°
+
+Measure distance at each angle
+
+Store (angle, distance)
+
+What MATLAB is for
+
+store vectors theta, rho
+
+visualize with:
+
+polarplot(theta, rho);
+
+
+Expected insight
+
+walls appear as curves
+
+free space as gaps
+
+ultrasonic mapping is crude but informative
+
+This is a primitive radar.
+
+g) Find the exit (advanced task)
+
+What they want conceptually
+Autonomous navigation using sensor data.
+
+What you do physically
+
+Place robot in box with an opening
+
+Perform 360° scan
+
+Detect direction with largest distance
+
+Drive toward that direction
+
+Optional extension
+
+if multiple exits → choose widest
+
+basic decision-making
+
+Expected insight
+This is autonomous behavior:
+sense → decide → act.
+
+How this will be judged (important)
+
+They are not looking for perfection.
+They are looking for:
+
+correct reasoning
+
+clean measurement
+
+plots that make sense
+
+understanding of why braking ∝ speed²
+
+sensible handling of sensor errors (255, clipping)
+
+If your explanation matches the logic we discussed, you’re doing real engineering, not just “making LEGO move”.
+
+One-sentence mental model for Section 3
+
+Section 3 takes you from measuring a sensor, to controlling a robot, to building a model, and finally to using that model to make decisions.
+
+If you want next, I can:
+
+help you write a single MATLAB script that matches tasks (c–e), or
+
+help you draft a lab report explanation that sounds precise and confident without being long.
+
+i would appericate any code 
+
+Absolutely. Below is a working MATLAB starter pack that covers the whole “Durchführung” section (a–f) in clean, testable chunks. You can run each part separately, and you’ll only need to adjust ports and wheel diameter once.
+
+Assumptions (change if needed):
+
+Motors: A = right, B = left
+
+Ultrasonic sensor: Port 4
+
+Units: cm
+
+Your robot drives straight with syncedStart(...,'turnRatio',0)
+
+0) One-time setup helper (EV3 + devices)
+%% === SETUP (run once) ===
+clear; clc;
+
+% Connect to EV3 (USB)
+ev3 = legoev3('usb');
+
+% Motors
+motorR = ev3.motorA;   % right
+motorL = ev3.motorB;   % left
+
+% Ultrasonic sensor on Port 4
+us = ev3.sensor4;
+us.mode = DeviceMode.UltraSonic.DistCM;
+
+disp("EV3 connected. Motors + Ultrasonic ready.");
+
+A) Read ultrasonic continuously (basic test)
+%% === A) LIVE ULTRASONIC READ ===
+for k = 1:200
+    d = us.value;             % cm (255 means no echo)
+    if d == 255
+        fprintf("d = no echo (255)\n");
+    else
+        fprintf("d = %.1f cm\n", d);
+    end
+    pause(0.05);
+end
+
+C) Drive forward and stop when distance <= 40 cm
+%% === C) DRIVE UNTIL WALL (STOP AT 40cm) ===
+target = 40;   % cm
+power  = 30;   % test power
+
+% Use active braking for precise stop in this task
+motorR.brakeMode = 'Brake';
+motorL.brakeMode = 'Brake';
+
+% syncStart works with regulation off (as in your PDF)
+motorR.speedRegulation = 'Off';
+motorL.speedRegulation = 'Off';
+
+motorR.power = power;
+motorL.power = power;
+
+motorR.syncedStart(motorL, 'turnRatio', 0);
+
+while true
+    d = us.value;
+    if d ~= 255 && d <= target
+        break;
+    end
+    pause(0.02);
+end
+
+motorR.syncedStop();
+disp("Stopped at target distance.");
+
+D) Measure braking distance for different powers (coast mode)
+
+This logs braking distance using the motor encoder (tachos).
+You need wheel circumference.
+
+%% === D) BRAKING DISTANCE VS POWER (COAST) ===
+powers = [20 30 40 50 60 70 80];
+nRep   = 3;
+
+% Measure/enter your wheel diameter (cm)
+wheelDiameter_cm = 5.6;                       % <-- CHANGE THIS
+wheelCirc_cm = pi * wheelDiameter_cm;
+
+% Helper: convert tacho degrees to distance (cm)
+deg2cm = @(deg) (deg/360) * wheelCirc_cm;
+
+results = struct();
+results.power = powers;
+results.brake_cm = zeros(size(powers));
+results.brake_cm_all = zeros(numel(powers), nRep);
+
+% Coast = measure real braking roll-out
+motorR.brakeMode = 'Coast';
+motorL.brakeMode = 'Coast';
+
+motorR.speedRegulation = 'Off';
+motorL.speedRegulation = 'Off';
+
+startRunTime = 1.2;   % seconds to let speed stabilize (tweak)
+pauseAfterStop = 1.5; % seconds to let it fully stop (tweak)
+
+for i = 1:numel(powers)
+    P = powers(i);
+    fprintf("\nPower %d\n", P);
+
+    for r = 1:nRep
+        % Reset tacho
+        resetRotation(motorR);
+        resetRotation(motorL);
+
+        % Start driving straight
+        motorR.power = P;
+        motorL.power = P;
+        motorR.syncedStart(motorL,'turnRatio',0);
+
+        pause(startRunTime);
+
+        % Stop motors (coast)
+        motorR.syncedStop();
+
+        % Wait until robot stops rolling
+        pause(pauseAfterStop);
+
+        % Read rollout distance from tacho
+        degR = readRotation(motorR);
+        degL = readRotation(motorL);
+        cmR  = deg2cm(degR);
+        cmL  = deg2cm(degL);
+
+        brake_cm = (cmR + cmL)/2; % average both wheels
+        results.brake_cm_all(i,r) = brake_cm;
+
+        fprintf("  rep %d: %.2f cm\n", r, brake_cm);
+
+        pause(0.8); % time to reposition robot
+    end
+
+    results.brake_cm(i) = mean(results.brake_cm_all(i,:));
+    fprintf("mean: %.2f cm\n", results.brake_cm(i));
+end
+
+% Plot
+figure; grid on; hold on;
+plot(results.power, results.brake_cm, 'o-','LineWidth',1.5);
+xlabel('Power'); ylabel('Braking distance (cm)');
+title('Braking distance vs Power (COAST)');
+
+
+Notes (important):
+
+You must reposition the robot to the same start line each rep.
+
+wheelDiameter_cm must be correct or distances will be scaled wrong.
+
+This measures rollout after “stop command” (coast braking).
+
+Speed measurement (using tacho + tic/toc)
+
+If you want speed (deg/s or cm/s), do this while driving:
+
+%% === SPEED MEASUREMENT (DEG/S and CM/S) ===
+wheelDiameter_cm = 5.6;           % <-- CHANGE
+wheelCirc_cm = pi * wheelDiameter_cm;
+deg2cm = @(deg) (deg/360) * wheelCirc_cm;
+
+P = 50;
+
+motorR.brakeMode = 'Coast';
+motorL.brakeMode = 'Coast';
+motorR.speedRegulation = 'Off';
+motorL.speedRegulation = 'Off';
+
+resetRotation(motorR);
+resetRotation(motorL);
+
+motorR.power = P;
+motorL.power = P;
+motorR.syncedStart(motorL,'turnRatio',0);
+
+pause(0.5); % stabilize
+
+deg1 = readRotation(motorR);
+tic;
+pause(0.2);
+dt = toc;
+deg2 = readRotation(motorR);
+
+omega_deg_s = (deg2 - deg1)/dt;          % deg/s
+v_cm_s = deg2cm(omega_deg_s);            % cm/s
+
+motorR.syncedStop();
+
+fprintf("omega = %.1f deg/s, v = %.2f cm/s\n", omega_deg_s, v_cm_s);
+
+Fit braking distance model with polyfit (quadratic)
+
+Use speed instead of power if you measured it; otherwise you can fit vs power as a first approximation.
+
+%% === POLYFIT (Quadratic) ===
+x = results.power;     % or measured speed vector
+y = results.brake_cm;
+
+p = polyfit(x, y, 2);  % y ≈ p(1)x^2 + p(2)x + p(3)
+fprintf("Fit: y = %.6f x^2 + %.6f x + %.6f\n", p(1), p(2), p(3));
+
+xx = linspace(min(x), max(x), 200);
+yy = polyval(p, xx);
+
+figure; grid on; hold on;
+plot(x, y, 'o','LineWidth',1.5);
+plot(xx, yy, '-','LineWidth',1.5);
+xlabel('x (Power or Speed)'); ylabel('Braking distance (cm)');
+title('Quadratic fit to braking distance');
+legend('Measured','polyfit(2)');
+
+E) Predictive braking: stop early so you don’t hit the wall
+
+This uses your fitted model p to decide when to stop.
+
+%% === E) PREDICTIVE STOPPING AT A GIVEN WALL DISTANCE ===
+% You must have p from polyfit + chosen x variable (power or speed).
+% Here we use POWER as x (simple version).
+
+P = 60;               % chosen driving power
+stopMargin = 40;      % final desired distance to wall (cm)
+
+% predicted braking rollout (cm) from polynomial
+predBrake = polyval(p, P);
+
+% So we must command stop when distance <= stopMargin + predBrake
+trigger = stopMargin + predBrake;
+
+fprintf("Predicted brake=%.2f cm, trigger stop at %.2f cm\n", predBrake, trigger);
+
+motorR.brakeMode = 'Coast';
+motorL.brakeMode = 'Coast';
+motorR.speedRegulation = 'Off';
+motorL.speedRegulation = 'Off';
+
+motorR.power = P;
+motorL.power = P;
+motorR.syncedStart(motorL,'turnRatio',0);
+
+while true
+    d = us.value;
+    if d ~= 255 && d <= trigger
+        break;
+    end
+    pause(0.02);
+end
+
+motorR.syncedStop();
+disp("Stop command issued (coast). Robot should roll and end near margin.");
+
+F) 360° scan + polar plot (simple version)
+
+This assumes you can rotate the sensor with a motor (e.g., motorC).
+If you rotate the whole robot instead, we can adapt.
+
+%% === F) 360 SCAN (sensor on a rotating motor) ===
+rot = ev3.motorC;             % <-- motor that rotates the sensor
+rot.brakeMode = 'Brake';
+rot.speedRegulation = 'Off';
+rot.power = 15;
+
+us.mode = DeviceMode.UltraSonic.DistCM;
+
+% Scan parameters
+stepDeg = 5;                  % angular step
+anglesDeg = 0:stepDeg:355;
+
+theta = deg2rad(anglesDeg);
+rho   = zeros(size(theta));
+
+resetRotation(rot);
+
+for k = 1:numel(anglesDeg)
+    targetDeg = anglesDeg(k);
+
+    % rotate to target angle (relative, simple approach)
+    % We'll drive until tacho is close to target
+    rot.start();
+
+    while readRotation(rot) < targetDeg
+        pause(0.01);
+    end
+    rot.stop();
+
+    d = us.value;
+    if d == 255
+        d = 100;              % clip "no echo"
+    end
+    rho(k) = min(d, 100);     % clip far values
+
+    pause(0.03);
+end
+
+% Plot
+figure;
+polarplot(theta, rho);
+title('Ultrasonic 360° scan (clipped at 100 cm)');
+
+Quick “common failure” fixes
+
+Distance always 255: object too far / angled / soft; or wrong sensor port/mode.
+
+Robot curves: motors not synced, or different friction; use syncedStart(...,0).
+
+Braking distances inconsistent: battery level + floor surface; keep conditions constant.
+
+Encoder distance wrong: fix wheelDiameter_cm.
