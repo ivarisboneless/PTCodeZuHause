@@ -21,3 +21,5 @@ function readLightTimerFcn(timerObj, event)
     % Save back to timer
     timerObj.UserData = data;
 end
+
+% this is how it is runned brick = lightConnectEV3('bluetooth','reflect'); out   = lightReadWithTimer(brick, 5, 'bluetooth'); lightDisconnectEV3(brick);
