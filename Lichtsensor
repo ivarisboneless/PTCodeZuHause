@@ -1,0 +1,178 @@
+Part 1 — The sensor (what you are actually measuring)
+
+The EV3 light sensor has two modes you care about:
+
+  -- Ambient → passive
+      Measures existing light (room light, sun, lamp).
+
+  -- Reflect → active
+     Turns on a red LED and measures how much light comes back from a surface.
+
+Why red?
+Because the sensor is most sensitive in the red / infrared region (see the sensitivity curve in the Grundlagen section). This is physics, not LEGO magic.
+
+Key facts you should remember:
+
+-- Values are relative, not physical units.
+-- White surfaces → high reflect values
+-- Dark surfaces → low reflect values
+-- Switching modes costs time (~30 ms)
+
+Part 2 — Talking to the EV3 (connection logic)
+
+You never talk to the sensor directly.
+You talk through a brick object:
+
+--- code: 
+brickObj = legoev3('usb');      % or 'bluetooth'
+brickObj.sensor1.mode = DeviceMode.Color.Ambient;
+value = brickObj.sensor1.value;
+
+Part 3 — Reading data the wrong way (while-loop)
+
+Your first solution (lightReadWithLoop) uses a loop:
+--- code: 
+tic
+while toc < numberOfSeconds
+    value = brickObj.sensor1.value;
+    values(end+1) = value;
+end
+
+This works, but it has three problems:
+
+MATLAB is blocked during the loop
+→ GUI freezes, no interaction possible.
+Timing is not precise
+
+→ loop speed depends on CPU load.
+Code does everything at once
+
+→ hard to extend or reuse.
+Still, this step is important because it teaches:
+
+1. how fast values arrive,
+2. how USB vs Bluetooth differ,
+3. how noisy real data is.
+
+Part 4 — Time becomes data (timestamps)
+
+Then you upgrade the loop:
+-- store time for each measurement
+plot:
+1. value vs time
+2. Δt between measurements
+3. This reveals a key insight:
+4. Sensors don’t give you data at perfect intervals.
+
+USB → faster, more stable
+Bluetooth → slower, more jitter
+
+That’s not a MATLAB issue.
+That’s communication latency.
+
+Part 5 — Timers (the real heart of the experiment)
+A timer is MATLAB saying:
+“Call this function later, without blocking me.”
+code: 
+  t = timer;
+  t.Period = 0.1;              % 100 ms
+  t.ExecutionMode = 'fixedRate';
+  t.TimerFcn = @readLightTimerFcn;
+
+Then MATLAB does this internally:
+wait → fire event → call function → return → wait → repeat
+Important:
+You do NOT call readLightTimerFcn yourself.
+The timer does.
+That’s why callback functions exist.
+
+Part 6 — Why UserData exists (this confuses everyone)
+
+Callback functions:
+cannot return values
+are called by MATLAB, not you
+So how do they remember anything?
+Answer: UserData
+You pack everything you need into a struct:
+--- code: 
+  myUserData.brickObj = brickObj;
+  myUserData.values   = [];
+  myUserData.times    = [];
+  Then store it:
+--- code: 
+t.UserData = myUserData;
+Inside the callback:
+--- code: 
+  data = t.UserData;
+  data.values(end+1) = newValue;
+  t.UserData = data;
+
+This is state.
+Without it, your timer would have amnesia.
+
+
+Part 7 — Stopping the timer (hidden exam trick)
+
+A timer does not stop itself.
+You must choose:
+1. stop after N seconds
+2. stop after N values
+3. stop via button
+Typical solution:
+--- code: 
+if toc(data.startTime) > numberOfSeconds
+    stop(timerObj);
+end
+
+This is why the Versuch explicitly asks:
+
+“Which mechanisms are possible?”
+They want you to think, not copy.
+
+Part 8 — GUI: same idea, new trigger
+
+A GUI is just:
+
+timers + callbacks + stored state
+triggered by buttons instead of time
+
+Buttons don’t “do things”.
+Buttons emit events.
+
+You react with callbacks:
+--- code: 
+function StartButtonPushed(app, event)
+    if strcmp(app.myTimer.Running,'off')
+        start(app.myTimer);
+    end
+end
+Same timer.
+Same callback.
+Different trigger.
+
+Part 9 — Why everything lives in app
+
+The app object is a class instance.
+
+It holds:
+
+UI elements (app.UIAxes)
+timers (app.myTimer)
+config (app.config)
+data buffers (app.data)
+So instead of UserData, the GUI uses:
+--- code:
+app.data.measurementData
+
+Cleaner. More structured. Less fragile.
+That’s why GUIs feel “easier” once you get them.
+
+Part 10 — The final mental model (this is the key)
+
+If you remember only this, you’re good:
+  1. Sensors produce data
+  2. Timers schedule when data is read
+  3. Callbacks react to events
+  4. State lives in UserData or app
+  5. GUIs are event routers, not logic engines
+  6. Everything else is syntax.
