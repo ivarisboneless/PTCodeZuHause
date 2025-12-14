@@ -1,0 +1,85 @@
+classdef LightGUI < matlab.ui.componentcontainer.ComponentContainer
+
+    % ===== UI components =====
+    properties (Access = private)
+        StartButton matlab.ui.control.Button
+        ReadButton  matlab.ui.control.Button
+        StopButton  matlab.ui.control.Button
+        ValueLabel  matlab.ui.control.Label
+    end
+
+    % ===== EV3 objects =====
+    properties (Access = private)
+        ev3
+        light
+    end
+
+    % ===== Component methods =====
+    methods (Access = protected)
+
+        % Create UI
+        function setup(comp)
+
+            comp.Position = [1 1 320 240];
+
+            comp.StartButton = uibutton(comp, ...
+                'Text','Connect', ...
+                'Position',[40 170 240 30], ...
+                'ButtonPushedFcn', @(~,~)startEV3(comp));
+
+            comp.ReadButton = uibutton(comp, ...
+                'Text','Read Light', ...
+                'Position',[40 120 240 30], ...
+                'Enable','off', ...
+                'ButtonPushedFcn', @(~,~)readLight(comp));
+
+            comp.StopButton = uibutton(comp, ...
+                'Text','Disconnect', ...
+                'Position',[40 70 240 30], ...
+                'Enable','off', ...
+                'ButtonPushedFcn', @(~,~)stopEV3(comp));
+
+            comp.ValueLabel = uilabel(comp, ...
+                'Text','Light value: ---', ...
+                'Position',[40 30 240 22], ...
+                'HorizontalAlignment','center');
+        end
+
+        % Required but unused
+        function update(comp)
+        end
+    end
+
+    % ===== Callback logic =====
+    methods (Access = private)
+
+        function startEV3(comp)
+            comp.ev3   = legoev3('usb');
+            comp.light = colorSensor(comp.ev3, 3);
+            comp.light.Mode = 'AmbientLight';
+
+            comp.ReadButton.Enable = 'on';
+            comp.StopButton.Enable = 'on';
+            comp.StartButton.Enable = 'off';
+
+            comp.ValueLabel.Text = 'Connected';
+        end
+
+        function readLight(comp)
+            value = readLightIntensity(comp.light);
+            comp.ValueLabel.Text = "Light value: " + num2str(value);
+        end
+
+        function stopEV3(comp)
+            clear comp.ev3
+            comp.ev3   = [];
+            comp.light = [];
+
+            comp.ReadButton.Enable = 'off';
+            comp.StopButton.Enable = 'off';
+            comp.StartButton.Enable = 'on';
+
+            comp.ValueLabel.Text = 'Disconnected';
+        end
+    end
+end
