@@ -1,0 +1,543 @@
+Got you. Task (a) is: open the prepared App (lightGui.mlapp) and edit startupFcn(app) so it:
+
+uses the correct connection type (USB or Bluetooth)
+
+uses the correct sensor mode (ambient or reflect)
+
+creates + configures the timer (but doesn’t necessarily start it)
+
+Below is a drop-in startupFcn you can paste into the template inside App Designer → Code View → startupFcn(app).
+(Adjust the few “EDIT ME” lines.)
+
+Code for (a): startupFcn(app)
+function startupFcn(app)
+    % =========================
+    % EDIT ME (your choices)
+    % =========================
+    connectionType = 'usb';      % 'usb' or 'bluetooth'
+    sensorMode     = 'ambient';  % 'ambient' or 'reflect' (try 'reflected' if error)
+    sensorPort     = 1;          % EV3 sensor port 1..4
+    app.period     = 0.10;       % seconds (bluetooth: 0.20 is safer)
+    app.maxPoints  = 200;        % how many points to keep
+    % =========================
+
+    % --- store config in app (so buttons can use it later) ---
+    app.mode = sensorMode;
+
+    % --- connect EV3 + sensor using your helper function (as PDF says) ---
+    % If your project provides lightConnectEV3(...), use it:
+    try
+        app.ev3 = lightConnectEV3(connectionType, app.mode);
+        % If lightConnectEV3 already creates/sets the sensor internally, you might
+        % already have it. If not, create it here:
+        if isempty(app.sensor)
+            app.sensor = colorSensor(app.ev3, sensorPort);
+        end
+    catch
+        % fallback (in case your template doesn't actually provide it)
+        if strcmpi(connectionType,'usb')
+            app.ev3 = legoev3('usb');
+        else
+            app.ev3 = legoev3('bluetooth');
+        end
+        app.sensor = colorSensor(app.ev3, sensorPort);
+    end
+
+    % --- prepare UI text/axes (names may differ in your template) ---
+    % If your GUI has a label for the mode, set it:
+    if isprop(app,'ModeLabel')
+        app.ModeLabel.Text = ['Mode: ' app.mode];
+    end
+
+    % Setup plot area:
+    if isprop(app,'UIAxes')
+        cla(app.UIAxes);
+        grid(app.UIAxes,'on');
+        xlabel(app.UIAxes,'time [s]');
+        ylabel(app.UIAxes,['light ' app.mode]);
+    end
+
+    % --- init data containers (for later plotting) ---
+    app.t0 = [];
+    app.t  = [];
+    app.y  = [];
+
+    % --- create timer (configured here, started by Start button later) ---
+    app.tim = timer( ...
+        'ExecutionMode','fixedRate', ...
+        'Period', app.period, ...
+        'BusyMode','drop', ...
+        'TimerFcn', @(~,~) app.onTick() );
+
+    % optional: helpful console messages
+    app.tim.StartFcn = @(~,~) disp('Timer started');
+    app.tim.StopFcn  = @(~,~) disp('Timer stopped');
+end
+
+Important notes (so it actually runs in your lightGui.mlapp)
+1) Your app must have these properties
+
+If the template doesn’t already have them, add inside:
+
+properties (Access = private)
+
+properties (Access = private)
+    ev3
+    sensor
+    mode
+
+    tim
+    period = 0.10
+    maxPoints = 200
+
+    t0
+    t
+    y
+end
+
+2) You must also have an onTick method later
+
+The timer calls app.onTick(). If you don’t have it yet, use this minimal one:
+
+methods (Access = private)
+    function onTick(app)
+        if isempty(app.t0), app.t0 = tic; end
+
+        tNow = toc(app.t0);
+        yNow = readLightIntensity(app.sensor, app.mode);
+
+        app.t(end+1) = tNow;
+        app.y(end+1) = yNow;
+
+        if numel(app.t) > app.maxPoints
+            app.t = app.t(end-app.maxPoints+1:end);
+            app.y = app.y(end-app.maxPoints+1:end);
+        end
+
+        if isprop(app,'UIAxes')
+            plot(app.UIAxes, app.t - app.t(1), app.y, 'LineWidth', 1.5);
+            drawnow limitrate;
+        end
+    end
+end
+
+
+If you show me a screenshot of your Code View left panel (where it lists component names + callbacks), I can adapt the code exactly to your real names (sometimes it’s UIAxes vs UIAxes2, ModeLabel vs Label, etc.).
+
+Perfect — this screenshot is task (b): write the UIFigureCloseRequestFcn so the GUI always cleans up (timer stops, objects deleted, EV3 disconnected) even if the user closes the window with the X.
+
+Step-by-step what they want in (b)
+
+When the GUI is closing, do this in this order:
+
+Stop timer (if running)
+
+Delete timer (so it doesn’t keep running in background)
+
+Deactivate / clear sensor + EV3 objects (disconnect)
+
+Delete the figure (delete(app.UIFigure)) — App Designer usually already has this last line
+
+Where to put it (App Designer)
+
+Design View → click on empty background (or app.UIFigure in Component Browser) → Callbacks → Go to UIFigureCloseRequestFcn
+MATLAB will create a function like:
+
+function UIFigureCloseRequest(app, event)
+    % ...
+end
+
+
+Paste this code inside.
+
+Code for (b): UIFigureCloseRequestFcn (simple + safe)
+function UIFigureCloseRequest(app, event)
+
+    % 1) Stop timer if it exists and is running
+    if ~isempty(app.tim) && isvalid(app.tim)
+        if strcmp(app.tim.Running,'on')
+            stop(app.tim);
+        end
+
+        % 2) Delete timer
+        delete(app.tim);
+    end
+
+    % 3) Disconnect EV3 + sensor (simple way)
+    % Clearing the objects releases the connection.
+    try
+        clear app.sensor app.ev3
+    catch
+        % do nothing (cleanup should never crash)
+    end
+
+    % 4) Close the UI (App Designer usually generates this)
+    delete(app.UIFigure);
+
+end
+
+Why I used try/catch here?
+
+Because cleanup code must be bulletproof. Even if EV3 is already unplugged or the timer is already deleted, the GUI should still close.
+
+If your template uses different names
+
+If the timer property is not app.tim but something like app.myTimer, just replace app.tim accordingly.
+
+Quick test (you’ll feel it)
+
+Run the app
+
+Press Start (timer runs)
+
+Close the window using X
+✅ MATLAB should not keep spamming errors, and the timer should disappear.
+
+If you want, paste your properties section (the part where app.tim, app.ev3, app.sensor are defined) and I’ll adapt the code to your exact variable names so it compiles first try.
+
+without try and catch 
+
+Good instinct 👍
+You’re right: for teaching / lab work, try–catch often hides what’s really happening.
+Let’s do this clean, simple, and “human-made”, using only basic checks.
+
+Goal (task b, very clearly)
+
+When the GUI is closed (❌ button or close):
+
+Stop the timer
+
+Delete the timer
+
+Disconnect EV3 / sensor
+
+Close the GUI window
+
+No try, no catch, no magic.
+
+Assumption (important but standard)
+
+In startupFcn you already created and stored:
+
+app.tim     % timer object
+app.ev3     % legoev3 object
+app.sensor  % colorSensor object
+
+
+This is exactly how App Designer is meant to be used.
+
+✅ Final simple code: UIFigureCloseRequestFcn
+
+Paste this exactly into the callback:
+
+function UIFigureCloseRequest(app, event)
+
+    % 1) Stop timer (if it exists)
+    if ~isempty(app.tim)
+        if strcmp(app.tim.Running, 'on')
+            stop(app.tim);
+        end
+
+        % 2) Delete timer
+        delete(app.tim);
+        app.tim = [];
+    end
+
+    % 3) Disconnect sensor + EV3
+    app.sensor = [];
+    app.ev3    = [];
+
+    % 4) Close the GUI window
+    delete(app.UIFigure);
+
+end
+
+Why this works (line by line, no hand-waving)
+✔ isempty(app.tim)
+
+Ensures the timer was actually created before touching it.
+
+✔ strcmp(app.tim.Running,'on')
+
+You must not stop a timer that isn’t running.
+
+✔ delete(app.tim)
+
+Kills the timer for real (no background execution).
+
+✔ app.tim = []
+
+Removes the reference so MATLAB frees memory.
+
+✔ app.sensor = []; app.ev3 = [];
+
+This is enough to close the EV3 connection.
+MATLAB disconnects automatically when the object is cleared.
+
+✔ delete(app.UIFigure)
+
+This is the official App Designer way to close the GUI.
+
+Why this is BETTER than try–catch
+
+You see errors if something is wrong
+
+No hidden behavior
+
+Matches how exams & labs expect code
+
+Easy to explain orally
+
+Mental model (remember this for exams)
+
+CloseRequestFcn = emergency exit
+Everything must be shut down even if the user clicks ❌
+
+That’s why this callback exists.
+
+If you want next, I can:
+
+rewrite startupFcn to perfectly match this
+
+simplify Start / Stop button callbacks
+
+or make a minimal full App Designer template (very exam-friendly)
+
+Just tell me which one.
+
+Yep — this part (c) is super simple once you understand the trick:
+
+What (c) is doing (the idea)
+
+The Quit button should NOT duplicate cleanup code.
+
+Instead, it should request a normal close of the window.
+
+That close triggers your UIFigureCloseRequestFcn (the cleanup you wrote in part b).
+
+So the Quit button is basically:
+
+“Pretend the user clicked X, and let CloseRequest handle everything.”
+
+✅ Code for (c): QuitButtonPushed
+
+In App Designer, open the callback QuitButtonPushed and put this:
+
+function QuitButtonPushed(app, event)
+    close(app.UIFigure);
+end
+
+
+That’s literally it.
+
+Why close(app.UIFigure) and not delete(app.UIFigure)?
+
+
+close(app.UIFigure) triggers a CloseRequest event
+
+That event calls UIFigureCloseRequestFcn → where you stop/delete timer + disconnect EV3 + then delete the figure.
+
+If you do delete(app.UIFigure) inside the Quit button, you might skip your cleanup if CloseRequest doesn’t run the way you expect.
+
+✅ Code for StartButtonPushed (no try/catch)
+
+Put this in the callback of your Start button:
+
+function StartButtonPushed(app, event)
+
+    % Start timer only if it is currently OFF
+    if strcmp(app.myTimer.Running, 'off')
+        start(app.myTimer);
+    end
+
+end
+
+
+That’s the whole requirement.
+
+Why this is exactly what the sheet wants
+
+app.myTimer.Running is either 'on' or 'off'
+
+strcmp(...,'off') checks the string safely (as they requested)
+
+start(app.myTimer) is called only when it’s off → no error
+
+What you should see when it works
+
+If you configured the timer’s StartFcn (earlier in the exercise), then when you press Start:
+
+the timer starts
+
+MATLAB prints the StartFcn message in the console
+
+
+e) Stop-Knopf: Timer stoppen
+What you do (steps)
+
+In Design View click the Stop button.
+
+Go to Callbacks → Add ButtonPushedFcn.
+
+In that function paste this:
+
+% Button pushed function: StopButton
+function StopButtonPushed(app, event)
+
+    % Stop only if it is running (prevents MATLAB error)
+    if strcmp(app.myTimer.Running, 'on')
+        stop(app.myTimer);
+    end
+
+end
+
+
+Why this works:
+
+app.myTimer.Running is either 'on' or 'off'.
+
+stop(timer) errors if you stop an already-stopped timer, so we guard it with strcmp.
+
+f) Toggle Mode-Knopf: Mode wechseln (ambient <-> reflect)
+What you do (steps)
+
+In Design View click the Toggle Mode button.
+
+Go to Callbacks → Add ButtonPushedFcn.
+
+Paste this:
+
+% Button pushed function: ToggleModeButton
+function ToggleModeButtonPushed(app, event)
+
+    wasRunning = strcmp(app.myTimer.Running, 'on');
+
+    % 1) stop timer first (safe)
+    if wasRunning
+        stop(app.myTimer);
+    end
+
+    % 2) toggle the mode value in your config
+    if strcmp(app.config.sensorMode, 'ambient')
+        app.config.sensorMode = 'reflect';
+    else
+        app.config.sensorMode = 'ambient';
+    end
+
+    % 3) update the GUI text (as the sheet says)
+    app.ModeText.Text = app.config.sensorMode;
+
+    % 4) start again if it was running
+    if wasRunning
+        start(app.myTimer);
+    end
+
+end
+
+Important note (so you don’t get stuck)
+
+In MATLAB EV3, you can read like this inside your timer callback:
+
+val = readLightIntensity(app.sensor, app.config.sensorMode);
+
+
+So you don’t need to “set the sensor mode” as a separate command — you just read using the current mode string ('ambient' or 'reflect'). That’s the cleanest way and matches what your script already does.
+
+
+What (g) wants you to do (translated to logic)
+
+Every timer tick:
+
+Read one new sensor value
+
+Keep only the last numberOfValues measurements
+
+Shift old values left
+
+Put the new value at the end
+
+Plot the updated data
+
+Store the updated data back into the timer
+
+That’s it.
+
+Assumptions (based on the sheet)
+
+You already have (from startupFcn):
+
+app.config.numberOfValues          % e.g. 200
+app.myTimer                        % timer
+app.myTimer.UserData.measurementData   % vector of zeros
+app.sensor                         % colorSensor
+app.config.sensorMode              % 'ambient' or 'reflect'
+app.UIAxes                         % axes in the GUI
+
+✅ Code for (g): Timer callback function
+
+This goes into the TimerFcn of app.myTimer.
+
+function lightTimerFcn(timerObj, event)
+
+    % Get stored data from timer
+    myUserData = timerObj.UserData;
+
+    % 1) Read one sensor value
+    newValue = readLightIntensity( ...
+        myUserData.sensor, ...
+        myUserData.sensorMode);
+
+    % 2) Shift old values to the left
+    myUserData.measurementData(1:end-1) = ...
+        myUserData.measurementData(2:end);
+
+    % 3) Put new value at the end
+    myUserData.measurementData(end) = newValue;
+
+    % 4) Plot data
+    plot(myUserData.UIAxes, myUserData.measurementData);
+    grid(myUserData.UIAxes, 'on');
+
+    % 5) Store updated data back into timer
+    timerObj.UserData = myUserData;
+
+end
+
+What must be inside timerObj.UserData
+
+In startupFcn, you should have something like:
+
+myUserData.measurementData = zeros(app.config.numberOfValues,1);
+myUserData.sensor          = app.sensor;
+myUserData.sensorMode      = app.config.sensorMode;
+myUserData.UIAxes          = app.UIAxes;
+
+app.myTimer.UserData = myUserData;
+
+
+This is exactly what the exercise text describes.
+
+Why this is “human-made” and correct
+
+No structs flying around randomly
+
+One vector, one shift, one plot
+
+No time arrays, no fancy animation
+
+Easy to explain in an oral exam
+
+Matches the wording of the PDF line by line
+
+Mental picture (remember this)
+
+Think of the data vector like a conveyor belt:
+
+[ old old old old new ]
+
+
+Each timer tick:
+
+everything moves left
+
+new value drops in at the end
