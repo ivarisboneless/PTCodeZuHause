@@ -1,0 +1,201 @@
+A) Add your own “data/config” properties (top of the app)
+In App Designer → Code View → properties (Access = private) add:
+--- code: 
+properties (Access = private)
+    brickObj                 % EV3 connection
+    myTimer                  % MATLAB timer
+
+    config                   % struct for config (mode, period, buffer size)
+    data                     % struct for data buffer
+end
+
+
+
+
+B) startupFcn (Task 3.3a)
+  1.This runs when the app starts. It should:
+  2.connect EV3
+  3.set config (usb/bluetooth, sensor mode)
+  4.init buffer
+  5.create/config timer
+
+% Code that executes after component creation
+function startupFcn(app)
+
+    % ---- choose connection + mode ----
+    app.config.connectionType = 'usb';      % 'usb' or 'bluetooth'
+    app.config.sensorMode     = 'ambient';  % 'ambient' or 'reflect'
+
+    % number of values to show in GUI (buffer length)
+    app.config.numberOfValues = 200;
+
+    % timer period per Versuch:
+    if strcmp(app.config.connectionType,'usb')
+        app.config.period = 0.05;   % 50 ms
+    else
+        app.config.period = 0.10;   % 100 ms
+    end
+
+    % ---- connect EV3 + set sensor mode ----
+    app.brickObj = lightConnectEV3(app.config.connectionType, app.config.sensorMode);
+
+    % show mode text (your label name may differ!)
+    app.ModeText.Text = app.config.sensorMode;
+
+    % ---- init data buffer ----
+    app.data.measurementData = zeros(1, app.config.numberOfValues);
+
+    % ---- create + configure timer ----
+    app.myTimer = timer;
+    app.myTimer.ExecutionMode = 'fixedRate';
+    app.myTimer.Period        = app.config.period;
+
+    % timer callback (defined below in this same app)
+    app.myTimer.TimerFcn      = @(t,evt) timerTick(app, t, evt);
+
+    % optional: console messages like the Versuch mentions
+    app.myTimer.StartFcn      = @(~,~) disp("Timer started");
+    app.myTimer.StopFcn       = @(~,~) disp("Timer stopped");
+
+end
+
+
+Why the @(t,evt) timerTick(app,t,evt) trick?
+Because App Designer callbacks need access to app, but timer callbacks normally only get (timerObj,event).
+
+
+
+C) CloseRequestFcn (Task 3.3b) — this is the most important one
+This must run whether you press Quit or click the window X. The Versuch explicitly says: stop/delete timer, deactivate sensor, disconnect, then delete figure 
+
+Create it: Design View → right-click background → Callbacks → UIFigureCloseRequestFcn
+--- code: 
+% Close request function: UIFigure
+function UIFigureCloseRequestFcn(app, event)
+
+    % stop + delete timer safely
+    if ~isempty(app.myTimer) && isvalid(app.myTimer)
+        if strcmp(app.myTimer.Running,'on')
+            stop(app.myTimer);
+        end
+        delete(app.myTimer);
+    end
+
+    % disconnect EV3
+    if ~isempty(app.brickObj)
+        lightDisconnectEV3(app.brickObj);
+        app.brickObj = [];
+    end
+
+    % close GUI window
+    delete(app.UIFigure);
+end
+
+
+
+D) Quit button (Task 3.3c)
+Quit should just trigger the CloseRequest logic (clean shutdown).
+
+% Button pushed function: QuitButton
+function QuitButtonPushed(app, event)
+    close(app.UIFigure);
+end
+
+
+E) Start button (Task 3.3d)
+Only start timer if it’s not already running (the Versuch warns about this)
+
+code: 
+
+% Button pushed function: StartButton
+function StartButtonPushed(app, event)
+    if strcmp(app.myTimer.Running,'off')
+        start(app.myTimer);
+    end
+end
+
+
+F) Stop button (Task 3.3e)
+
+% Button pushed function: StopButton
+function StopButtonPushed(app, event)
+    if strcmp(app.myTimer.Running,'on')
+        stop(app.myTimer);
+    end
+end
+
+
+G) Toggle Mode button (Task 3.3f)
+
+Rules from the sheet:
+stop timer if running
+flip mode ambient ↔ reflect
+update sensor mode on EV3
+restart timer if it was running
+update GUI text app.ModeText.Text = app.config.sensorMode;
+
+% Button pushed function: ToggleModeButton
+function ToggleModeButtonPushed(app, event)
+
+    wasRunning = strcmp(app.myTimer.Running,'on');
+    if wasRunning
+        stop(app.myTimer);
+    end
+
+    % flip mode
+    if strcmp(app.config.sensorMode,'ambient')
+        app.config.sensorMode = 'reflect';
+    else
+        app.config.sensorMode = 'ambient';
+    end
+
+    % apply to sensor (port 1)
+    if strcmp(app.config.sensorMode,'ambient')
+        app.brickObj.sensor1.mode = DeviceMode.Color.Ambient;
+    else
+        app.brickObj.sensor1.mode = DeviceMode.Color.Reflect;
+    end
+
+    % update label
+    app.ModeText.Text = app.config.sensorMode;
+
+    if wasRunning
+        start(app.myTimer);
+    end
+end
+
+
+H) Timer callback content (Task 3.3g) — the “live plot” brain
+This is what runs every 50ms/100ms. The Versuch tells you exactly:
+buffer is limited to numberOfValues
+shift values left by one index
+last element becomes the new sensor value
+plot into app.UIAxes
+keep data stored 
+Add this as a private method inside the app:
+
+methods (Access = private)
+
+    function timerTick(app, timerObj, event)
+
+        % 1) read new value
+        newVal = app.brickObj.sensor1.value;
+
+        % 2) shift buffer left, append new value at end
+        app.data.measurementData(1:end-1) = app.data.measurementData(2:end);
+        app.data.measurementData(end)     = newVal;
+
+        % 3) plot inside UIAxes
+        plot(app.UIAxes, app.data.measurementData, 'LineWidth', 1.5);
+        grid(app.UIAxes, 'on');
+        xlabel(app.UIAxes, 'Sample');
+        ylabel(app.UIAxes, 'Light value');
+
+        % Optional: keep axes stable (looks nicer)
+        % ylim(app.UIAxes, [0 100]); % if your sensor outputs 0..100-ish
+        drawnow limitrate;
+    end
+
+end
+That’s it. When you press Start, it should continuously update the plot.
+
