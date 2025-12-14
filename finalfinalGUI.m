@@ -1,3 +1,6 @@
+
+%% f = uifigure;
+%% g = lightGui(f);
 classdef lightGui < matlab.ui.componentcontainer.ComponentContainer
 
     % ========= UI =========
