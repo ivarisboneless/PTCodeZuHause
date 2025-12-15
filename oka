@@ -1,0 +1,190 @@
+0) IMPORTANT: names must match your components
+
+In Design View, your component tags likely are something like:
+
+StartButton, StopButton, ToggleButton, QuitButton
+
+ModeText (label)
+
+UIAxes
+
+And you’ll store the timer in app.myTimer
+
+If your names differ, just replace them in code.
+
+1) Add these properties (App state)
+
+Put this in your app under properties (Access = private):
+
+properties (Access = private)
+    brickObj            % EV3 connection object
+    config              % struct with settings
+    myTimer             % timer handle
+end
+
+2) startupFcn (does task 3.3a)
+
+This follows the PDF description: connect, set config, create/config timer. 
+
+Versuch_5_Lichtsensor
+
+% Code that executes after component creation
+function startupFcn(app)
+
+    % --- choose here ---
+    app.config.connectionType = 'usb';        % 'usb' or 'bluetooth'
+    app.config.sensorMode     = 'ambient';    % 'ambient' or 'reflect'
+    app.config.numberOfValues = 200;          % buffer length shown in plot
+    % -------------------
+
+    % period depends on connection (PDF: ~100ms BT, ~50ms USB) :contentReference[oaicite:8]{index=8}
+    if strcmp(app.config.connectionType,'bluetooth')
+        app.config.period = 0.10;
+    else
+        app.config.period = 0.05;
+    end
+
+    % connect EV3 + set sensor mode (you already have lightConnectEV3 in Versuch 3.1) :contentReference[oaicite:9]{index=9}
+    app.brickObj = lightConnectEV3(app.config.connectionType, app.config.sensorMode);
+
+    % show mode text in GUI (PDF says update label) :contentReference[oaicite:10]{index=10}
+    app.ModeText.Text = app.config.sensorMode;
+
+    % ---- timer user data buffer ----
+    myUserData.brickObj = app.brickObj;
+    myUserData.data     = zeros(1, app.config.numberOfValues);
+
+    % create + configure timer
+    app.myTimer = timer;
+    app.myTimer.ExecutionMode = 'fixedSpacing';
+    app.myTimer.Period        = app.config.period;
+    app.myTimer.UserData      = myUserData;
+
+    % timer callbacks (you can keep StartFcn/StopFcn messages if template had them)
+    app.myTimer.TimerFcn = @(t,evt) readLightTimerFcn(app, t, evt);
+end
+
+3) CloseRequestFcn (does task 3.3b)
+
+This is the “clean shutdown” the PDF insists on. 
+
+Versuch_5_Lichtsensor
+
+% Close request function: UIFigure
+function UIFigureCloseRequestFcn(app, event)
+
+    % stop + delete timer safely
+    if ~isempty(app.myTimer) && isvalid(app.myTimer)
+        if strcmp(app.myTimer.Running,'on')
+            stop(app.myTimer);
+        end
+        delete(app.myTimer);
+    end
+
+    % disconnect EV3
+    if ~isempty(app.brickObj)
+        lightDisconnectEV3(app.brickObj);
+    end
+
+    % close the window (App Designer already generates this line usually)
+    delete(app.UIFigure);
+end
+
+4) Quit button (does task 3.3c)
+
+PDF says: call close on the figure to trigger CloseRequest. 
+
+Versuch_5_Lichtsensor
+
+% Button pushed function: QuitButton
+function QuitButtonPushed(app, event)
+    close(app.UIFigure);
+end
+
+5) Start / Stop buttons (tasks 3.3d + 3.3e)
+
+PDF: only start if not running, only stop if running. 
+
+Versuch_5_Lichtsensor
+
+% Button pushed function: StartButton
+function StartButtonPushed(app, event)
+    if strcmp(app.myTimer.Running,'off')
+        start(app.myTimer);
+    end
+end
+
+% Button pushed function: StopButton
+function StopButtonPushed(app, event)
+    if strcmp(app.myTimer.Running,'on')
+        stop(app.myTimer);
+    end
+end
+
+6) Toggle Mode button (task 3.3f)
+
+Stop timer → switch mode → set sensor mode → restart if it was running → update label. 
+
+Versuch_5_Lichtsensor
+
+% Button pushed function: ToggleButton
+function ToggleButtonPushed(app, event)
+
+    wasRunning = strcmp(app.myTimer.Running,'on');
+    if wasRunning
+        stop(app.myTimer);
+    end
+
+    % toggle config mode
+    if strcmp(app.config.sensorMode,'ambient')
+        app.config.sensorMode = 'reflect';
+    else
+        app.config.sensorMode = 'ambient';
+    end
+
+    % update real sensor mode on EV3 (PDF: update sensor mode) :contentReference[oaicite:15]{index=15}
+    if strcmp(app.config.sensorMode,'ambient')
+        app.brickObj.sensor1.mode = DeviceMode.Color.Ambient;
+    else
+        app.brickObj.sensor1.mode = DeviceMode.Color.Reflect;
+    end
+
+    % update label
+    app.ModeText.Text = app.config.sensorMode;
+
+    if wasRunning
+        start(app.myTimer);
+    end
+end
+
+
+(If your sensor is not on sensor1, change sensor1 to sensor3 etc.)
+
+7) TimerFcn: read sensor, shift buffer, plot (task 3.3g)
+
+This is the heart of the whole thing. 
+
+Versuch_5_Lichtsensor
+
+function readLightTimerFcn(app, timerObject, event)
+
+    % 1) get user data
+    myUserData = timerObject.UserData;
+
+    % 2) read one sensor value
+    lightValue = myUserData.brickObj.sensor1.value;
+
+    % 3) shift data left, put new value at end (buffer stays fixed length)
+    myUserData.data(1:end-1) = myUserData.data(2:end);
+    myUserData.data(end)     = lightValue;
+
+    % 4) plot into UIAxes
+    plot(app.UIAxes, myUserData.data);
+    xlabel(app.UIAxes, 'Samples');
+    ylabel(app.UIAxes, 'Light value');
+
+    drawnow limitrate
+
+    % 5) store back
+    timerObject.UserData = myUserData;
+end
